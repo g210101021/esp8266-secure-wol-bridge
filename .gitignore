@@ -1,0 +1,48 @@
+# ==============================================================================
+# Git Ignore - Secure IoT WoL Bridge & Gateway
+# ==============================================================================
+
+# Secrets and Local Configurations (NEVER COMMIT SENSITIVE DATA)
+.env
+.env.*
+!.env.example
+include/secrets.h
+include/config.local.h
+*.key
+*.pem
+*.pfx
+
+# PlatformIO & Embedded Build Artifacts
+.pio/
+.pioenvs/
+.piolibdeps/
+*.hex
+*.bin
+*.elf
+
+# Python Virtual Environments & Cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+venv/
+.venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# State Files & Runtime Logs
+*.log
+logs/
+last_reported_ip.txt
+
+# OS & Editor Files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*~
