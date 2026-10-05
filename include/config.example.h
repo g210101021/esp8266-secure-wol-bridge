@@ -6,48 +6,58 @@
 // ==============================================================================
 // GÜVENLİ VE DAĞITIK WAKE-ON-LAN (WoL) MİKRO-AJAN YAPILANDIRMASI
 // ==============================================================================
-// Bu dosya bir yapılandırma şablonudur. Gerçek hassas değerleri (parolalar, özel
-// token'lar) içeren dosyanızı 'include/secrets.h' olarak oluşturup derleme
-// sürecine dahil edebilirsiniz. 'secrets.h' dosyası .gitignore ile korunmalıdır.
+// BU BİR ŞABLONDUR - GERÇEK DEĞERLER İÇERMEZ.
+//
+// Kullanım:
+//   1. Bu dosyayı 'include/secrets.h' olarak kopyalayın.
+//   2. Aşağıdaki değerleri kendi cihazınıza göre doldurun.
+//   3. secrets.h .gitignore ile korunuyor; ASLA commit etmeyin.
+//
+// ÜRETİM GÜVENLİK KURALLARI:
+//   - WAKE_AUTH_TOKEN boş bırakılırsa veya yer tutucu kalırsa cihaz TÜM WoL
+//     komutlarını reddeder (fail-closed). Bu koruma main.cpp içinde zorunlu kılınır.
+//   - Token, gateway'deki WOL_AUTH_TOKEN ile BİREBİR AYNI olmalıdır.
+//   - MQTT_USER/MQTT_PASSWORD boşsa kanal halka açık broker'da dinlenebilir.
 // ==============================================================================
 
 // --- 1. HEDEF İŞ İSTASYONU (PC) DONANIM BİLGİSİ ---
-// Uyandırılacak olan yerel ağdaki hedef ağ kartının (NIC) MAC adresi.
-// Örnek: 00:11:22:33:44:55 (Kendi hedef cihazınızın MAC adresini giriniz)
-static const byte TARGET_MAC[6] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55};
+// Uyandırılacak yerel ağdaki hedef ağ kartının (NIC) MAC adresi.
+// Örnek: 00:e0:4c:5e:27:38
+static const byte TARGET_MAC[6] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 
-// Hedef yerel ağ WoL broadcast portu (Genellikle UDP 9 veya 7 kullanılır)
+// Hedef yerel ağ WoL broadcast portu (genellikle UDP 9 veya 7)
 static const uint16_t WOL_PORT = 9;
 
 // --- 2. GÜVENLİ MQTT BROKER YAPILANDIRMASI ---
-// Broker sunucu adresi ve portu. 
-// Üretim ortamında TLS (Port 8883) veya kimlik doğrulamalı özel broker önerilir.
-static const char* MQTT_BROKER_HOST = "broker.hivemq.com";
-static const uint16_t MQTT_BROKER_PORT = 1883;
+// Üretimde KİMLİK DOĞRULAMALI ve TLS'LI (port 8883) kendi broker'ınızı kullanın.
+// Not: Bu firmware düz metin WiFiClient ile çalışır; TLS desteği eklemek için
+// PubSubClient + BearSSL ve kök sertifika yüklenmelidir. Bu yapılmadan
+// broker'a giden token düz metin görünür.
+static const char* MQTT_BROKER_HOST = "";
+static const uint16_t MQTT_BROKER_PORT = 8883;
 
-// Broker kimlik doğrulama bilgileri (Anonim broker kullanılıyorsa boş bırakılabilir)
 static const char* MQTT_USER = "";
 static const char* MQTT_PASSWORD = "";
 
-// --- 3. YETKİLENDİRME VE GÜVENLİK ANAHTARI (TOKEN) ---
-// Halka açık veya paylaşımlı broker üzerinde yetkisiz uyandırma isteklerini
-// engellemek için kullanılan yüksek entropili cihaz gizli anahtarı.
-// Gelen WAKE komutu bu token ile doğrulanmadan işlem yapılmaz.
-static const char* WAKE_AUTH_TOKEN = "GENERATE_HIGH_ENTROPY_SECRET_TOKEN_HERE";
+// --- 3. YETKİLENDİRME ANAHTARI (TOKEN) ---
+// Halka açık broker üzerinde yetkisiz uyandırma isteklerini engelleyen anahtar.
+// Üretin: python3 -c "import secrets; print(secrets.token_hex(32))"
+// Bu değer main.cpp'deki yer tutucu kontrolüne takılır: yer tutucu kalırsa
+// cihaz hiçbir WoL komutunu kabul etmez (bilinçli olarak çalışmaz).
+static const char* WAKE_AUTH_TOKEN = "CHANGE_ME_generate_with_secrets_token_hex_32";
 
 // --- 4. TOPIC (KANAL) ŞABLONLARI ---
-// Cihaza özel tekil konu adresi. Cihaz Chip ID'si ile dinamik birleştirilebilir.
-// Örnek format: "enterprises/edge/wol/<DEVICE_ID>/wake"
+// Cihaza özel ve tahmin edilemez kanal adı tercih edin.
+// Topic adı, broker'ı dinleyen herkese açıktır; sır tutmayın, tahmin edilemez olsun.
 #define TOPIC_PREFIX "edge/wol/device"
 static const char* WAKE_TOPIC   = TOPIC_PREFIX "/wake";
 static const char* STATUS_TOPIC = TOPIC_PREFIX "/status";
 
-// --- 5. WIFIMANAGER (PROVISIONING) PARAMETRELERİ ---
-// Cihaz ilk açıldığında veya kayıtlı Wi-Fi ağına bağlanamadığında bir Access Point (AP)
-// açar. Kullanıcı telefon veya bilgisayarından bağlanıp web arayüzünden ağı seçer.
-// Böylece kaynak kodda hiçbir Wi-Fi parolası açık metin olarak tutulmaz!
+// --- 5. WIFIMANAGER (PROVİZYON) PARAMETRELERİ ---
+// Cihaz ilk açılışta veya kayıtlı ağa bağlanamadığında şifreli bir AP açar.
+// Böylece kaynak kodda hiçbir Wi-Fi parolası açık metin tutulmaz.
 static const char* AP_PORTAL_SSID = "WoL-Bridge-Setup";
-static const char* AP_PORTAL_PASS = "SetupSecure2026!"; // En az 8 karakterli AP şifresi
-static const unsigned long AP_TIMEOUT_SECONDS = 180;    // 3 dakika sonra otomatik zaman aşımı
+static const char* AP_PORTAL_PASS = "CHANGE_ME_at_least_8_chars"; // >= 8 karakter
+static const unsigned long AP_TIMEOUT_SECONDS = 180; // 3 dakika sonra kapanır
 
 #endif // CONFIG_EXAMPLE_H

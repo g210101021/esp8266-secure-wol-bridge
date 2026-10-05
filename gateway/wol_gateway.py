@@ -18,22 +18,18 @@ Güvenlik Mimarisi:
 import asyncio
 import hmac
 import ipaddress
-import json
 import logging
 import time
-from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 
 from aiohttp import web
 
 from . import config
 from .dispatcher import dispatcher
+from .iprecord import read_ip, resolve_client_ip, write_ip
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("WoLGateway")
-
-# Son bildirilen güvenli IP kaydı için dosya yolu
-IP_RECORD_FILE = Path(__file__).resolve().parent / "last_reported_ip.txt"
 
 # Canlılık Durumu Önbelleği (Sürekli soket açıp hedefi yormamak için)
 _health_cache: Dict[str, Any] = {
@@ -126,9 +122,11 @@ async def handle_wake_post(request: web.Request) -> web.Response:
             body = await request.json()
             if "target_ip" in body and body["target_ip"]:
                 # IP adres formatını doğrula
-                ipaddress.ip_address(body["target_ip"].strip())
-                custom_ip = body["target_ip"].strip()
+                parsed = ipaddress.ip_address(str(body["target_ip"]).strip())
+                custom_ip = str(parsed)
+                logger.info(f"[WAKE] Çağıran tarafından özel hedef istendi: {custom_ip}")
     except Exception:
+        # Gövde bozuk/geçersizse varsayılan hedefe düşülür (sessizce yutulur).
         pass
 
     result = await dispatcher.dispatch_wake(custom_target_ip=custom_ip)
@@ -139,19 +137,18 @@ async def handle_wake_post(request: web.Request) -> web.Response:
 async def handle_status_get(request: web.Request) -> web.Response:
     """GET /api/status - Hedef bilgisayarın çevrimiçi/çevrimdışı durumunu raporlar."""
     online = await check_target_online(config.HEALTH_PROBE_HOST, config.HEALTH_PROBE_PORT)
-    
-    last_reported_ip = ""
-    if IP_RECORD_FILE.exists():
-        try:
-            last_reported_ip = IP_RECORD_FILE.read_text(encoding="utf-8").strip()
-        except Exception:
-            pass
+
+    last_reported_ip = read_ip() or ""
 
     return web.json_response({
         "online": online,
         "probe_target": f"{config.HEALTH_PROBE_HOST}:{config.HEALTH_PROBE_PORT}",
+        "probe_is_self": config.HEALTH_PROBE_HOST in ("127.0.0.1", "localhost", "::1"),
         "target_mac": config.TARGET_MAC,
-        "last_reported_ip": last_reported_ip or config.TARGET_BROADCAST_IP,
+        "mac_is_placeholder": config.TARGET_MAC.lower() == config.PLACEHOLDER_MAC,
+        "last_reported_ip": last_reported_ip,
+        "effective_target_ip": dispatcher.resolve_target_ip(),
+        "mqtt_bridge_enabled": config.MQTT_ENABLED,
         "timestamp": time.time()
     })
 
@@ -159,29 +156,33 @@ async def handle_status_get(request: web.Request) -> web.Response:
 async def handle_heartbeat_post(request: web.Request) -> web.Response:
     """POST /api/heartbeat - İstemcinin dinamik WAN/yerel IP adresini güvenle kaydeder.
     
-    GÜVENLİK: Gövdedeki rastgele IP'ler reddedilir; doğrudan soket seviyesindeki
-    gerçek bağlantı adresi (request.remote) kaydedilir.
+    GÜVENLİK: Gövdedeki rastgele IP'ler reddedilir; yalnızca soket seviyesinde
+    doğrulanabilir gerçek kaynak adresi (veya loopback arkasındaki proxy'nin
+    bildirdiği X-Forwarded-For) kaydedilir. Yazılan değer ayrıca IP olarak
+    yeniden doğrulanır ve atomik olarak diske yazılır.
     """
-    client_ip = request.remote or ""
-    
-    # Geçerli bir IP olup olmadığını kontrol et
-    try:
-        ip_obj = ipaddress.ip_address(client_ip)
-        if ip_obj.is_loopback and "X-Forwarded-For" in request.headers:
-            # Reverse proxy arkasındaysa X-Forwarded-For'un ilk adresini al
-            forwarded = request.headers["X-Forwarded-For"].split(",")[0].strip()
-            ipaddress.ip_address(forwarded)
-            client_ip = forwarded
-    except ValueError:
-        return web.json_response({"ok": False, "error": "Geçersiz IP adresi tespit edildi."}, status=400)
+    client_ip = resolve_client_ip(request.remote, request.headers.get("X-Forwarded-For"))
+
+    if not client_ip:
+        return web.json_response(
+            {"ok": False, "error": "Kaynak IP çözümlenemedi veya geçersiz."},
+            status=400
+        )
 
     try:
-        IP_RECORD_FILE.write_text(client_ip, encoding="utf-8")
-        logger.info(f"[HEARTBEAT] Yeni dinamik IP kaydedildi: {client_ip}")
-        return web.json_response({"ok": True, "recorded_ip": client_ip})
+        recorded = write_ip(client_ip)
+    except ValueError as e:
+        return web.json_response({"ok": False, "error": str(e)}, status=400)
     except Exception as e:
         logger.error(f"[HEARTBEAT-HATA] IP kaydı yazılamadı: {e}")
-        return web.json_response({"ok": False, "error": str(e)}, status=500)
+        return web.json_response({"ok": False, "error": "IP kaydı yazılamadı."}, status=500)
+
+    logger.info(f"[HEARTBEAT] Yeni dinamik IP kaydedildi: {recorded}")
+    return web.json_response({
+        "ok": True,
+        "recorded_ip": recorded,
+        "used_for_wake": config.PREFER_RECORDED_IP
+    })
 
 
 HTML_DASHBOARD = """<!DOCTYPE html>
@@ -299,6 +300,12 @@ def create_app() -> web.Application:
 
 
 if __name__ == "__main__":
+    # Yapılandırmayı doğrula ve riskleri yüksek sesle logla.
+    config.validate_config()
+
     app = create_app()
     logger.info(f"WoL Gateway {config.GATEWAY_HOST}:{config.GATEWAY_PORT} üzerinde başlatılıyor...")
+    logger.info(f"  Hedef MAC      : {config.TARGET_MAC}")
+    logger.info(f"  WoL hedefi     : {dispatcher.resolve_target_ip()}:{config.WOL_PORT}")
+    logger.info(f"  MQTT köprüsü   : {'açık' if config.MQTT_ENABLED else 'kapalı'}")
     web.run_app(app, host=config.GATEWAY_HOST, port=config.GATEWAY_PORT)

@@ -1,0 +1,59 @@
+[Unit]
+Description=Secure WoL Gateway (HTTP wake + MQTT bridge)
+Documentation=https://github.com/your-org/esp8266-secure-wol-bridge
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=wolgw
+Group=wolgw
+
+# Ortam değişkenleri .env dosyasından okunur (mod 0600). Gateway config.py
+# içinde dotenv ile yükler; yalnızca dosya yolunu sabitlemeniz yeterlidir.
+WorkingDirectory=/opt/esp8266-secure-wol-bridge
+Environment=PYTHONUNBUFFERED=1
+ExecStartPre=/usr/bin/test -f /etc/wol-gateway/.env
+ExecStart=/opt/esp8266-secure-wol-bridge/.venv/bin/python -m gateway.wol_gateway
+
+# --- Hız sınırı: tek kullanıcının gateway'i kıyametle kapatmasını engelle ---
+Restart=always
+RestartSec=5
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+# --- Güvenlik sertleştirme ---
+# Bu servis yalnızca bir WoL paketi yollar; dosya sistemi veya kabuk erişimi
+# gerektiren hiçbir iş yapmaz.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallFilter=@system-service
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+# --- Kaynak sınırları ---
+LimitNOFILE=4096
+
+# --- Günlükleme ---
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=wol-gateway
+
+[Install]
+WantedBy=multi-user.target
