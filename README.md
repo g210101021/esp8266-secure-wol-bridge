@@ -54,42 +54,37 @@ This project delivers an **enterprise-grade, security-hardened Edge-to-Cloud Wak
 
 ```mermaid
 flowchart TD
-    Client["Authorized Client (Bot / Admin / CI/CD)"]
+    Client["Authorized Client (Admin / Bot / CI/CD)"]
 
     subgraph Gateway["Hardened Asynchronous Gateway (aiohttp)"]
-        direction TB
         API["POST /api/wake"]
         Auth["Constant-Time Auth (hmac.compare_digest)"]
         Dedupe["In-Flight Lock & 15s Cooldown"]
         API --> Auth --> Dedupe
     end
 
-    subgraph Transport["Dual-Channel Redundant Transport"]
-        direction LR
-        UDP["Channel 1: Direct UDP Broadcast"]
-        MQTT["Channel 2: MQTT Broker (TLS 8883 + LWT)"]
+    subgraph Transport["Dual-Channel Redundant Dispatch"]
+        MQTT["Channel A: MQTT Bridge (TLS 8883 + LWT)"]
+        UDP["Channel B: Direct UDP Broadcast"]
     end
 
-    subgraph Edge["Target Local Area Network (Behind CGNAT)"]
-        direction TB
+    subgraph Edge["Target Local Network (Behind CGNAT)"]
         ESP["NodeMCU ESP8266 Micro-Agent"]
         Verify["Constant-Time Token Verification"]
-        Queue["Non-Blocking Task Queue (15ms Spacing)"]
+        Queue["Non-Blocking Loop Queue (15ms Spacing)"]
         Subnet["Local Subnet Broadcast (255.255.255.255:9)"]
         TargetPC["Target Workstation (Realtek RTL8153 NIC)"]
 
         ESP --> Verify --> Queue --> Subnet
-        Subnet -->|"102-Byte Magic Packet"| TargetPC
+        Subnet -->|"102-Byte Magic Packet Burst"| TargetPC
     end
 
     Client -->|"HTTP POST (X-Auth-Token)"| API
-    Dedupe -->|"Direct Burst"| UDP
     Dedupe -->|"WAKE:TOKEN"| MQTT
+    Dedupe -->|"Direct Burst"| UDP
 
-    UDP -.->|"WAN / Tailscale"| Subnet
     MQTT -->|"Subscribed Topic"| ESP
-
-    TargetPC -.->|"Tailscale Online State"| Client
+    UDP -.->|"Direct Route"| Subnet
 ```
 
 ---
