@@ -54,44 +54,42 @@ This project delivers an **enterprise-grade, security-hardened Edge-to-Cloud Wak
 
 ```mermaid
 flowchart TD
-    subgraph Control_Plane["External Control Plane"]
-        Client["Admin / Bot / CI/CD"]
-    end
+    Client["Authorized Client (Bot / Admin / CI/CD)"]
 
-    subgraph Gateway_Service["Hardened Asynchronous Gateway (aiohttp)"]
+    subgraph Gateway["Hardened Asynchronous Gateway (aiohttp)"]
+        direction TB
         API["POST /api/wake"]
-        AuthMiddleware["Constant-Time Auth (hmac.compare_digest)"]
-        Dedupe["In-Flight Lock & Cooldown Manager"]
-        Probe["Asynchronous Socket Health Probe (TTL Cache)"]
+        Auth["Constant-Time Auth (hmac.compare_digest)"]
+        Dedupe["In-Flight Lock & 15s Cooldown"]
+        API --> Auth --> Dedupe
     end
 
-    subgraph Message_Transport["Secure Message Transport"]
-        DirectSocket["UDP Socket Broadcaster"]
-        MQTTBroker["MQTT Broker (TLS 8883 / HiveMQ + LWT)"]
+    subgraph Transport["Dual-Channel Redundant Transport"]
+        direction LR
+        UDP["Channel 1: Direct UDP Broadcast"]
+        MQTT["Channel 2: MQTT Broker (TLS 8883 + LWT)"]
     end
 
-    subgraph Local_Edge["Target Local Area Network (Behind CGNAT)"]
-        ESP["ESP8266 WoL Micro-Agent"]
-        Verify["Constant-Time Token & Entropy Verification"]
-        LoopQueue["Non-Blocking Main Loop Queue (15ms Spacing)"]
+    subgraph Edge["Target Local Area Network (Behind CGNAT)"]
+        direction TB
+        ESP["NodeMCU ESP8266 Micro-Agent"]
+        Verify["Constant-Time Token Verification"]
+        Queue["Non-Blocking Task Queue (15ms Spacing)"]
         Subnet["Local Subnet Broadcast (255.255.255.255:9)"]
-        TargetPC["Target Workstation / Server (RTL8153 NIC)"]
+        TargetPC["Target Workstation (Realtek RTL8153 NIC)"]
+
+        ESP --> Verify --> Queue --> Subnet
+        Subnet -->|"102-Byte Magic Packet"| TargetPC
     end
 
-    Client -->|"HTTP POST (X-Auth-Token / Bearer)"| API
-    API --> AuthMiddleware
-    AuthMiddleware --> Dedupe
-    Dedupe -->|"Channel 1: Direct UDP"| DirectSocket
-    Dedupe -->|"Channel 2: WAKE:<TOKEN>"| MQTTBroker
+    Client -->|"HTTP POST (X-Auth-Token)"| API
+    Dedupe -->|"Direct Burst"| UDP
+    Dedupe -->|"WAKE:TOKEN"| MQTT
 
-    DirectSocket -.->|"WAN / VPN Tunnel"| Subnet
-    MQTTBroker -->|"Subscribed Topic"| ESP
+    UDP -.->|"WAN / Tailscale"| Subnet
+    MQTT -->|"Subscribed Topic"| ESP
 
-    ESP --> Verify
-    Verify --> LoopQueue
-    LoopQueue --> Subnet
-    Subnet -->|"102-Byte Magic Packet (0xFF x 6 + MAC x 16)"| TargetPC
-    TargetPC -.->|"Tailscale / LAN Online State"| Probe
+    TargetPC -.->|"Tailscale Online State"| Client
 ```
 
 ---
